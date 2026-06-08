@@ -2,6 +2,8 @@
 
 A full-stack application that pings `https://httpbin.org/anything` on a configurable schedule, stores each result in PostgreSQL, and streams live updates to a real-time dashboard with rolling analytics and anomaly detection.
 
+**Live app: [Ping Monitor](https://ping-monitor-production-6110.up.railway.app/)**
+
 ---
 
 ## Quick start
