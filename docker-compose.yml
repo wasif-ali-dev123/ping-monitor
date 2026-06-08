@@ -15,7 +15,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://dev:dev@db:5432/http_monitor
+      DATABASE_URL: postgresql://dev991122%40*:dev991122%40*@db:5432/http_monitor
       PING_CRON: "*/5 * * * *"
     depends_on:
       - db

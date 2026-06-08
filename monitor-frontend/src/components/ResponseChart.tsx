@@ -89,20 +89,21 @@ export function ResponseChart({ analytics, window, onWindowChange }: Props) {
           />
           <Tooltip
             contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: '#e2e8f0' }}
-            formatter={(value: number, name: string) => {
+            formatter={(value: unknown, name: unknown) => {
               const labels: Record<string, string> = {
                 responseTime: 'Response',
                 rollingMean: `${window} h avg`,
                 forecastHigh: 'Band high',
                 forecastLow: 'Band low',
               };
-              return [`${value} ms`, labels[name] ?? name];
+              const key = String(name);
+              return [`${value as number} ms`, labels[key] ?? key];
             }}
           />
           <Legend
             iconSize={10}
             wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-            formatter={(value) => {
+            formatter={(value: string) => {
               const labels: Record<string, string> = {
                 responseTime: 'Response time',
                 rollingMean: `${window} h rolling avg`,

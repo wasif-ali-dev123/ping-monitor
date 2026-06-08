@@ -6,12 +6,17 @@
     "monitor-frontend"
   ],
   "scripts": {
+    "setup": "bash dev.sh",
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run start:dev -w monitor-backend\" \"npm run dev -w monitor-frontend\"",
     "build": "npm run build -w monitor-backend && npm run build -w monitor-frontend",
     "lint": "npm run lint -w monitor-backend",
     "test": "npm run test -w monitor-backend",
     "test:cov": "npm run test:cov -w monitor-backend",
     "test:e2e": "npm run test:e2e -w monitor-backend"
+  },
+  "dependencies": {
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
