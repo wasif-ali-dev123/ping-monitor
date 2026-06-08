@@ -32,6 +32,7 @@
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/platform-socket.io": "^11.0.1",
     "@nestjs/schedule": "^5.0.1",
+    "@nestjs/serve-static": "^5.0.5",
     "@nestjs/websockets": "^11.0.1",
     "@prisma/client": "^6.2.1",
     "axios": "^1.7.9",
@@ -67,13 +68,21 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s", "!**/*.module.ts", "!main.ts"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s",
+      "!**/*.module.ts",
+      "!main.ts"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }

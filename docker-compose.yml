@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: http_monitor
+      POSTGRES_USER: dev991122@*
+      POSTGRES_PASSWORD: dev991122@*
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://dev:dev@db:5432/http_monitor
+      PING_CRON: "*/5 * * * *"
+    depends_on:
+      - db
+
+volumes:
+  pg_data:

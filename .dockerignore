@@ -1,0 +1,8 @@
+node_modules
+monitor-backend/node_modules
+monitor-frontend/node_modules
+monitor-backend/dist
+monitor-frontend/dist
+monitor-backend/.env
+coverage
+.git
