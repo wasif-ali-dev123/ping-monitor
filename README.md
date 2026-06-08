@@ -1,239 +1,221 @@
 # HTTP Monitor
 
-A full-stack application that pings `https://httpbin.org/anything` on a configurable schedule, stores each result, and streams live updates to a real-time dashboard with analytics and anomaly detection.
+A full-stack application that pings `https://httpbin.org/anything` on a configurable schedule, stores each result in PostgreSQL, and streams live updates to a real-time dashboard with rolling analytics and anomaly detection.
 
 ---
 
-## Setup
+## Quick start
 
 ### Prerequisites
 
 - Node.js 22+
-- PostgreSQL 16+ (or Docker)
+- PostgreSQL 16+
 
-### Local development (hot-reload)
+### One command
 
 ```bash
-# Install all dependencies (npm workspaces — single install from root)
-npm install
-
-# Copy env template and fill in DATABASE_URL
-cp monitor-backend/.env.example monitor-backend/.env
-
-# Apply migrations and generate Prisma client
-cd monitor-backend && npx prisma migrate dev && cd ..
-
-# Start backend (port 3000) in one terminal
-npm run dev -w monitor-backend
-
-# Start frontend dev server (port 5173, proxies /api and /socket.io) in another
-npm run dev -w monitor-frontend
+npm run setup
 ```
 
-Open http://localhost:5173.
+This script (`dev.sh`) does everything in order:
 
-### Local development with Docker
+1. Checks for `monitor-backend/.env` — if missing, copies `.env.example` and exits so you can fill in `DATABASE_URL` first
+2. Wipes all `node_modules` and the root `package-lock.json`, then runs a clean `npm install` from the workspace root
+3. Runs `prisma migrate dev` to apply any pending migrations (creates the database if it does not exist)
+4. Starts the backend (port 3000) and frontend dev server (port 5173) side by side via `concurrently`
 
-Spins up the app and a PostgreSQL container — no local Postgres needed.
+Open http://localhost:5173 — the Vite dev server proxies `/api` and `/socket.io` to the backend.
+
+### First run only
+
+```bash
+cp monitor-backend/.env.example monitor-backend/.env
+# edit monitor-backend/.env — set DATABASE_URL
+npm run setup
+```
+
+### Subsequent runs
+
+```bash
+npm run dev
+```
+
+---
+
+## Local development with Docker
+
+No local PostgreSQL needed — spins up the app and a database container together.
 
 ```bash
 docker compose up --build
 ```
 
-Open http://localhost:3000. Migrations run automatically on startup.
-
-To stop:
+Open http://localhost:3000. Migrations run automatically on container start.
 
 ```bash
-docker compose down
+docker compose down        # stop
+docker compose down -v     # stop and wipe the database volume
 ```
 
-To also wipe the database volume:
+> Credentials in `docker-compose.yml` are local-only defaults. If you change them, update the `DATABASE_URL` in the `app` service and URL-encode any special characters (`@` → `%40`).
 
-```bash
-docker compose down -v
+---
+
+## Project structure
+
 ```
-
-### Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `DATABASE_URL` | required | PostgreSQL connection string |
-| `PING_URL` | `https://httpbin.org/anything` | Target URL |
-| `PING_CRON` | `*/5 * * * *` | Cron expression for the ping schedule |
-| `REQUEST_TIMEOUT_MS` | `10000` | HTTP request timeout in milliseconds |
+.
+├── monitor-backend/        NestJS API, scheduler, WebSocket gateway
+│   ├── prisma/             Schema and migrations
+│   ├── src/
+│   │   ├── analytics/      Rolling stats, EWMA forecast, anomaly detection
+│   │   ├── common/         Shared utilities (payload generator)
+│   │   ├── config/         Typed configuration factory
+│   │   ├── database/       Prisma service
+│   │   ├── gateway/        Socket.io gateway
+│   │   ├── pings/          HTTP ping execution, history, stats
+│   │   └── scheduler/      CronJob wiring
+│   └── test/               E2E tests
+├── monitor-frontend/       React + Vite dashboard
+│   └── src/
+│       ├── api/            REST client
+│       ├── components/     UI components
+│       ├── hooks/          Data-fetching and socket hooks
+│       └── types/
+├── dev.sh                  One-command local setup script
+├── Dockerfile              Multi-stage build (builder → production)
+├── docker-compose.yml      Local full-stack with PostgreSQL
+└── .github/workflows/      CI pipeline
+```
 
 ---
 
 ## Architecture
 
-The system is a monorepo (`npm workspaces`) with two packages: a NestJS backend and a React frontend. In production, NestJS serves the compiled React build as static files — one process, one port, one deployment.
+Single deployment unit: NestJS serves the compiled React build as static files. One process, one port, one Railway service.
 
 ```
-┌─────────────────────────────────────────┐
-│              Browser client             │
-│  REST (fetch /api/*)                    │
-│  WebSocket (socket.io)                  │
-└────────────┬───────────────┬────────────┘
-             │               │
-     HTTP/REST            WebSocket
-             │               │
-┌────────────▼───────────────▼────────────┐
-│            NestJS (port 3000)           │
-│                                         │
-│  PingsController   GET /api/pings       │
-│                    GET /api/pings/stats │
-│                    GET /api/pings/:id   │
-│                    POST /api/pings/trigger │
-│                                         │
-│  AnalyticsController  GET /api/analytics│
-│                                         │
-│  PingsGateway      emit new_ping        │
-│                    emit anomaly_detected│
-│                                         │
-│  SchedulerService  CronJob every 5 min  │
-│    → PingsService.executePing()         │
-│    → PingsGateway.broadcastNewPing()    │
-│    → AnalyticsService (anomaly check)  │
-│    → PingsGateway.broadcastAnomaly()   │
-│                                         │
-│  ServeStaticModule  GET / (React SPA)  │
-└────────────────────────┬────────────────┘
-                         │ Prisma ORM
-                         ▼
-                   PostgreSQL
-                   (ping_records table)
+Browser
+  │
+  ├── HTTP  GET /api/*       NestJS controllers
+  ├── HTTP  POST /api/*
+  ├── WS    /socket.io       Socket.io gateway
+  └── HTTP  GET /            React SPA (served by ServeStaticModule)
+
+NestJS (port 3000)
+  ├── SchedulerService       CronJob every 5 min
+  │     ├── PingsService     POST to httpbin, persist result
+  │     ├── PingsGateway     broadcast new_ping + anomaly_detected
+  │     └── AnalyticsService anomaly check after each ping
+  ├── PingsController        GET /api/pings, /stats, /:id  POST /trigger
+  ├── AnalyticsController    GET /api/analytics?window=1-24
+  └── PrismaService          PostgreSQL via Prisma ORM
 ```
-
-### Backend modules
-
-| Module | Responsibility |
-|---|---|
-| `PingsModule` | Execute HTTP pings, persist results, serve history/stats |
-| `SchedulerModule` | Register and run the CronJob; wire ping → broadcast → anomaly check |
-| `GatewayModule` | Socket.io gateway; broadcast `new_ping` and `anomaly_detected` |
-| `AnalyticsModule` | Compute rolling stats, EWMA forecast, z-score anomaly detection |
-| `DatabaseModule` | Global Prisma client with lifecycle hooks |
-
-### Frontend components
-
-| Component / Hook | Responsibility |
-|---|---|
-| `useSocket` | Manages the Socket.io connection; calls back on `new_ping` / `anomaly_detected` |
-| `usePings` | Fetches paginated ping history; exposes `prependPing` for live updates |
-| `useStats` | Fetches and refreshes aggregate stats |
-| `useAnalytics` | Fetches analytics for the selected time window |
-| `StatsCards` | Displays total, success rate, avg/min/max response time |
-| `ResponseChart` | Recharts ComposedChart — response times, rolling mean, confidence band, forecast reference line, anomaly dots |
-| `PingTable` | Paginated table of ping records with status badges and row highlight on new arrivals |
-
----
-
-## Technology choices
-
-**NestJS** — chosen for its module system and first-class support for scheduling (`@nestjs/schedule`), WebSockets (`@nestjs/websockets`), configuration, and static file serving. The decorator-driven approach keeps each concern in its own module without boilerplate.
-
-**Prisma** — straightforward schema-to-type generation with good PostgreSQL support. Migration management via `prisma migrate dev` / `prisma migrate deploy` covers both local and production workflows cleanly.
-
-**Socket.io** — reliable WebSocket library with automatic reconnection and fallback. The frontend receives `new_ping` events without polling; the server pushes `anomaly_detected` separately so the UI can surface an alert without the dashboard needing to re-fetch.
-
-**React + Vite + Tailwind CSS v4** — fast dev cycle. Tailwind v4 drops the config file; styles are imported directly in CSS. Vite proxies `/api` and `/socket.io` to the backend during development so there are no CORS concerns locally.
-
-**Recharts** — composable chart library for React. `ComposedChart` lets a `Line`, `Area`, `Scatter`, and `ReferenceLine` share the same axes and dataset without custom SVG.
-
-**EWMA forecasting (α = 0.3)** — exponentially weighted moving average over the selected window. Chosen over linear regression because HTTP response time reverts to a baseline rather than trending monotonically. α = 0.3 weights roughly the last 10 observations meaningfully without over-reacting to individual spikes.
-
-**Z-score anomaly detection** — `z = |x − μ| / max(σ, 50ms)`. The σ floor of 50 ms prevents false positives when variance is low. Threshold of 2.5 flags roughly the outer 1.2% of a normal distribution. Failed pings are unconditionally anomalous regardless of response time.
-
-**npm workspaces** — single `node_modules` at root with hoisted packages, single `package-lock.json`. Avoids duplicated installs and keeps CI and Docker straightforward: `npm ci` from root installs everything.
-
-**Railway** — supports Dockerfile deployments with automatic PostgreSQL plugins and injects `DATABASE_URL` automatically. Single service means no cross-origin complexity.
 
 ---
 
 ## Database schema
 
-Single table `PingRecord`. The `payload` and `responseBody` columns store arbitrary JSON — `payload` is the request body sent to httpbin, `responseBody` is the echoed response.
+Single table. `payload` and `responseBody` store arbitrary JSON — the request body sent to httpbin and the echoed response.
 
 ```
 PingRecord
-──────────────────────────────────────────────────────────
-id            String   PK, UUID, auto-generated
-url           String   target URL that was pinged
-method        String   HTTP method (always "POST")
-payload       Json     request body sent to the target
-statusCode    Int?     HTTP response code (null on network error)
-responseBody  Json?    response body (null on failure)
-responseTime  Int      elapsed time in milliseconds
-success       Boolean  false if the request failed or timed out
-errorMessage  String?  populated only on failure
-createdAt     DateTime auto-set to insertion time
+─────────────────────────────────────────────────
+id            String    PK, UUID
+url           String    target that was pinged
+method        String    always "POST"
+payload       Json      request body
+statusCode    Int?      HTTP status (null on network error)
+responseBody  Json?     response body (null on failure)
+responseTime  Int       elapsed time in ms
+success       Boolean   false if request failed or timed out
+errorMessage  String?   set only on failure
+createdAt     DateTime  auto timestamp
 
 Indexes: createdAt DESC, success
 ```
 
-Migrations live in `monitor-backend/prisma/migrations/` and are applied automatically in production via `npx prisma migrate deploy` in the container startup command.
+Migrations live in `monitor-backend/prisma/migrations/` and are applied via `prisma migrate deploy` in the production container start command.
 
 ---
 
-## Testing strategy
+## Environment variables
 
-### Unit tests (`monitor-backend/src/pings/pings.service.spec.ts`)
-
-`PingsService` is the core component — it executes the HTTP ping, handles both success and error paths, persists the result, and provides all the data the rest of the system reads. Its tests use Jest with Prisma and axios mocked.
-
-Test coverage areas:
-- `generatePayload()` — structure, uniqueness, ISO timestamp validity, varied output
-- `executePing()` success path — correct HTTP call, persisted `success=true`, non-negative response time, payload stored
-- `executePing()` failure paths — network error, 5xx response with status code captured, non-Axios errors handled without re-throwing
-- `getHistory()` — pagination metadata, defaults, `totalPages` calculation including empty result
-- `getStats()` — success rate, failed count, rounding, null aggregates when no successful pings, zero-total edge case
-
-### E2E tests (`monitor-backend/test/app.e2e-spec.ts`)
-
-HTTP-level tests using Supertest against a real NestJS application instance. `PrismaService`, `PingsService`, `PingsGateway`, and `SchedulerService` are all mocked so the suite runs without a database.
-
-Coverage: all routes (`GET /health`, `GET /api/pings`, `GET /api/pings/stats`, `GET /api/pings/:id`, `POST /api/pings/trigger`) including pagination validation, 404 handling, and WebSocket broadcast on trigger.
-
-### CI (`/.github/workflows/ci.yml`)
-
-Three sequential steps on every push and pull request to `main`:
-1. **Lint** — ESLint with TypeScript strict rules
-2. **Unit tests with coverage** — Jest coverage report uploaded as an artifact
-3. **E2E tests** — full application integration against mocked dependencies
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | required | PostgreSQL connection string |
+| `PORT` | `3000` | HTTP server port |
+| `PING_URL` | `https://httpbin.org/anything` | Target URL to ping |
+| `PING_CRON` | `*/5 * * * *` | Cron expression for the ping schedule |
+| `REQUEST_TIMEOUT_MS` | `10000` | HTTP request timeout in ms |
+| `NODE_ENV` | `development` | Set to `production` in the Docker image |
 
 ---
 
-## Assumptions
+## Technology choices
 
-- The target URL (`httpbin.org/anything`) is always a POST endpoint that echoes the request body. The payload generator produces varied JSON objects that look like realistic API traffic.
-- Response times above ~500 ms from httpbin are normal occasionally. The z-score floor of 50 ms and threshold of 2.5 are tuned for this baseline.
-- A single database table is sufficient. There is no multi-tenancy or per-user isolation.
-- The WebSocket connection is unauthenticated. All connected clients receive all events.
-- The rolling analytics window is computed in application memory from a DB query rather than in SQL. For the data volumes involved (288 records/day at 5-minute intervals) this is fast enough and simpler.
+**NestJS** — module system with first-class support for scheduling (`@nestjs/schedule`), WebSockets (`@nestjs/websockets`), and static file serving. Each concern lives in its own module with minimal boilerplate.
+
+**Prisma** — schema-to-type generation with straightforward migration management. `prisma migrate dev` for local, `prisma migrate deploy` for production.
+
+**Socket.io** — reliable WebSocket library with automatic reconnection. The scheduler pushes `new_ping` and `anomaly_detected` events separately so the dashboard can surface an alert banner without the table needing to re-fetch.
+
+**React + Vite + Tailwind CSS v4** — fast dev cycle. Tailwind v4 uses a single CSS import with no config file. Vite proxies `/api` and `/socket.io` to the backend during development.
+
+**Recharts** — `ComposedChart` lets a `Line`, `Area`, `Scatter`, and `ReferenceLine` share the same axes and dataset without custom SVG.
+
+**EWMA forecasting (α = 0.3)** — exponentially weighted moving average over the selected window. Chosen over linear regression because HTTP response time reverts to a baseline rather than trending. α = 0.3 gives meaningful weight to roughly the last 10 observations.
+
+**Z-score anomaly detection** — `z = |x − μ| / max(σ, 50ms)`. The σ floor prevents false positives when variance is very low. Threshold 2.5 flags the outer ~1% of a normal distribution. Failed pings are unconditionally anomalous.
+
+**npm workspaces** — single `node_modules` at root, single `package-lock.json`. One `npm install` from root covers both packages. CI and Docker both use this.
 
 ---
 
-## Future improvements
+## Testing
 
-**Configurable target URLs** — allow monitoring multiple endpoints from the same instance, with per-URL stats and charts.
+```bash
+npm run test:cov   # unit tests with coverage
+npm run test:e2e   # e2e tests
+```
 
-**Alerting** — email or webhook notification when an anomaly is detected or when success rate drops below a threshold.
+**Unit tests** (`monitor-backend/src/pings/pings.service.spec.ts`) — `PingsService` is the core component. Prisma and axios are mocked. Coverage: `generatePayload` structure and uniqueness, `executePing` success and failure paths (network error, 5xx, non-Axios errors), `getHistory` pagination, `getStats` aggregates including null and zero-total edge cases.
 
-**Authentication** — basic API key or OAuth to protect the dashboard and trigger endpoint.
+**E2E tests** (`monitor-backend/test/app.e2e-spec.ts`) — Supertest against a real NestJS instance with all infrastructure providers mocked. No database required. Coverage: all `/api/pings` routes, pagination validation, 404 handling, WebSocket broadcast on trigger.
 
-**Smarter anomaly detection** — the current z-score is computed over the full selected window. A sliding-window z-score or seasonal decomposition would handle daily traffic patterns better.
-
-**Retention policy** — automatic deletion or archiving of records older than N days to keep the table size bounded.
-
-**Frontend tests** — React Testing Library unit tests for the custom hooks and chart components.
-
-**Database-side aggregations** — for windows larger than 24 h, computing stats in SQL with windowing functions would be more efficient than loading all records into memory.
+**CI** (`.github/workflows/ci.yml`) — runs on every push and PR to `main`: lint → unit tests with coverage upload → e2e tests.
 
 ---
 
 ## Deployment
 
-See [DEPLOY.md](DEPLOY.md) for Railway deployment steps.
+The app runs as a single Railway service — NestJS serves the API, WebSocket, and React frontend from one URL.
 
-The short version: connect the repository to a new Railway project, add the PostgreSQL plugin, and deploy. Migrations run automatically on container start. No environment variables need to be set manually — Railway injects `DATABASE_URL` from the plugin and `PORT` is handled by NestJS defaults.
+1. Create a new Railway project and connect the GitHub repository (root directory, no subdirectory)
+2. Railway detects the `Dockerfile` automatically
+3. Add a **PostgreSQL** plugin — Railway injects `DATABASE_URL` into the service automatically
+4. Deploy — the container runs `prisma migrate deploy` then `node dist/main`
+5. Generate a public domain in Railway service settings
+
+No environment variables need to be set manually for a basic deployment.
+
+---
+
+## Future improvements
+
+- **Multi-target monitoring** — configure multiple URLs with per-URL stats and charts
+- **Alerting** — email or webhook notification on anomaly or when success rate drops below a threshold
+- **Authentication** — API key or OAuth to protect the dashboard and trigger endpoint
+- **Smarter anomaly detection** — sliding-window z-score or seasonal decomposition to handle daily traffic patterns
+- **Retention policy** — auto-delete or archive records older than N days to keep the table size bounded
+- **Frontend tests** — React Testing Library for hooks and chart components
+- **Database aggregations** — SQL windowing functions for windows larger than 24 h instead of loading all rows into memory
+
+---
+
+## Assumptions
+
+- The target URL always accepts a POST with a JSON body and echoes it back. The payload generator produces varied objects that resemble realistic API traffic.
+- A single table is sufficient — no multi-tenancy or per-user isolation.
+- The WebSocket gateway is unauthenticated; all connected clients receive all events.
+- Rolling analytics are computed in application memory from a DB query. At 5-minute ping intervals this is at most a few hundred rows per 24-hour window, well within acceptable memory and latency bounds.
