@@ -28,7 +28,9 @@ export class SchedulerService implements OnModuleInit {
         this.pingsGateway.broadcastNewPing(record);
 
         const analytics = await this.analyticsService.getAnalytics(1);
-        if (this.analyticsService.isRecordAnomalous(record, analytics.windowStats)) {
+        if (
+          this.analyticsService.isRecordAnomalous(record, analytics.windowStats)
+        ) {
           this.pingsGateway.broadcastAnomaly(record);
         }
       } catch (err) {

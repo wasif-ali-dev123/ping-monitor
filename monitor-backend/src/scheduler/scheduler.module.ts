@@ -6,7 +6,12 @@ import { PingsModule } from '../pings/pings.module';
 import { SchedulerService } from './scheduler.service';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), PingsModule, GatewayModule, AnalyticsModule],
+  imports: [
+    ScheduleModule.forRoot(),
+    PingsModule,
+    GatewayModule,
+    AnalyticsModule,
+  ],
   providers: [SchedulerService],
 })
 export class SchedulerModule {}

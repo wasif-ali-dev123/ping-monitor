@@ -44,12 +44,19 @@ export interface AnalyticsResult {
 function rollingStats(values: number[]): RollingStats {
   if (values.length === 0) return { mean: 0, stdDev: 0, count: 0 };
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
-  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
-  return { mean: Math.round(mean), stdDev: Math.round(Math.sqrt(variance)), count: values.length };
+  const variance =
+    values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+  return {
+    mean: Math.round(mean),
+    stdDev: Math.round(Math.sqrt(variance)),
+    count: values.length,
+  };
 }
 
 function ewma(values: number[], alpha = 0.3): number {
-  return values.reduce((s, v, i) => (i === 0 ? v : alpha * v + (1 - alpha) * s));
+  return values.reduce((s, v, i) =>
+    i === 0 ? v : alpha * v + (1 - alpha) * s,
+  );
 }
 
 function isAnomaly(responseTime: number, stats: RollingStats): boolean {
@@ -74,7 +81,9 @@ export class AnalyticsService {
     const windowStats = rollingStats(successful.map((r) => r.responseTime));
 
     const forecastValue =
-      successful.length > 0 ? ewma(successful.map((r) => r.responseTime)) : windowStats.mean;
+      successful.length > 0
+        ? ewma(successful.map((r) => r.responseTime))
+        : windowStats.mean;
     const sigma = Math.max(windowStats.stdDev, 50);
     const forecast: ForecastPoint = {
       value: Math.round(forecastValue),

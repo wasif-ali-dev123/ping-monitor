@@ -30,6 +30,8 @@ export class PingsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   broadcastAnomaly(record: PingRecord): void {
     this.server.emit('anomaly_detected', record);
-    this.logger.warn(`Broadcast anomaly_detected: ${record.id} (${record.responseTime}ms)`);
+    this.logger.warn(
+      `Broadcast anomaly_detected: ${record.id} (${record.responseTime}ms)`,
+    );
   }
 }
